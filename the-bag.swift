@@ -33,89 +33,6 @@ extension Sequence {
     }
 }
 
-// MARK: - Futures
-// Via https://www.swiftbysundell.com/posts/under-the-hood-of-futures-and-promises-in-swift?rq=futures
-/// A simple futures class. Use this to make asynchronous calls behave synchronously.
-class Future<Value> {
-    /// The value to be provided to fulfill the future.
-    fileprivate var result: Result<Value>? {
-        didSet { result.map(fulfill) }
-    }
-
-    private var callbacks = [(Result<Value>) -> Void]()
-    /// Call this method to observe the result of the future and react to its fulfillment.
-    ///
-    /// - Parameter callback: The closure to observe the result of the future.
-    func observe(with callback: @escaping (Result<Value>) -> Void) {
-        if let result = result {
-            callback(result)
-        } else { callbacks.append(callback) }
-    }
-
-    private func fulfill(with result: Result<Value>) {
-        for callback in callbacks { callback(result) }
-        callbacks.removeAll()
-    }
-}
-/// The fully-featured promise that should be used internally to set up a future. Create a promise;
-/// upcast it to a future before returning it.
-final class Promise<Value>: Future<Value> {
-    /// An initializer allowing the creation of a promise, including one pre-filled with a result.
-    ///
-    /// - Parameter value: The value to include in the promise as a successful result.
-    init(_ value: Value? = nil) {
-        super.init()
-        
-        result = value.map(Result.success)
-    }
-    /// Fulfill the promise with a successful result.
-    ///
-    /// - Parameter value: The value to be passed to the promise within a successful result.
-    func honor(with value: Value) {
-        result = .success(value)
-    }
-    /// Fulfill the promise with a failure.
-    ///
-    /// - Parameter error: The error to be passed to the promise within a failure.
-    func repudiate(with error: Error) {
-        result = .failure(error)
-    }
-}
-
-extension Future {
-    /// Chain one future to another.
-    ///
-    /// - Parameter closure: A function that accepts a value and returns a future of another type.
-    /// - Returns: A future of the type returned by `closure`.
-    func chained<T>(with closure: @escaping (Value) throws -> Future<T>) -> Future<T> {
-        let promise = Promise<T>()
-        observe { result in
-            switch result {
-            case .success(let value):
-                do {
-                    try closure(value).observe { result in
-                        switch result {
-                        case .success(let value): promise.honor(with: value)
-                        case .failure(let error): promise.repudiate(with: error)
-                        }
-                    }
-                } catch { promise.repudiate(with: error) }
-            case .failure(let error): promise.repudiate(with: error)
-            }
-        }
-        return promise
-    }
-    /// Transform a future into a future of another type.
-    ///
-    /// - Parameter closure: A function that accepts a value and returns another type.
-    /// - Returns: A future of the type returned by `closure`.
-    func transformed<T>(by closure: @escaping (Value) throws -> T) -> Future<T> {
-        return chained { value in
-            return try Promise<T>(closure(value))
-        }
-    }
-}
-
 // MARK: - Table view data sources
 // Via https://www.swiftbysundell.com/posts/reusable-data-sources-in-swift?rq=table%20view%20data%20source
 /// A generic table view data source for simple one-section tables. It must be configured with an
@@ -154,15 +71,11 @@ class PrefabTableViewDataSource<CellModel>: NSObject, UITableViewDataSource {
 }
 
 /// A multisection table view data source. Each section is controlled by the corresponding child
-/// data source. An extension on this protocol forwards the relevant data source methods to the
-/// appropriate child data source.
-@objc protocol MultisectionTableViewDataSource: UITableViewDataSource {
+/// data source.
+class MultisectionTableViewDataSource: NSObject, UITableViewDataSource {
     /// An array of table view data sources. Each data source controls one section of the resulting
     /// multisection table.
-    var dataSources: [UITableViewDataSource] { get }
-}
-
-extension MultisectionTableViewDataSource {
+    var dataSources = [UITableViewDataSource]()
     
     func numberOfSections(in tableView: UITableView) -> Int {
         return dataSources.count
